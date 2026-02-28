@@ -1,0 +1,129 @@
+{
+  "name": "qualimetry-vscode-terraform-plugin",
+  "displayName": "Qualimetry Terraform Analyzer",
+  "version": "2.2.1",
+  "description": "Terraform analysis via tflint, Trivy, and checkov with rich rule descriptions",
+  "publisher": "Qualimetry",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Qualimetry/vscode-terraform-plugin"
+  },
+  "icon": "icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Linters",
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:terraform",
+    "onLanguage:hcl",
+    "onStartupFinished",
+    "onCommand:terraform.importRulesFromSonarQube",
+    "onCommand:terraform.runAnalysisManual"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "terraform.importRulesFromSonarQube",
+        "title": "Terraform: Import rules from SonarQube"
+      },
+      {
+        "command": "terraform.runAnalysisManual",
+        "title": "Terraform: Run analysis"
+      }
+    ],
+    "languages": [
+      {
+        "id": "terraform",
+        "aliases": [
+          "Terraform",
+          "HCL"
+        ],
+        "extensions": [
+          ".tf",
+          ".tf.json",
+          ".hcl"
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "Terraform Analyzer",
+      "properties": {
+        "terraformAnalyzer.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Terraform analysis (tflint, Trivy, checkov)"
+        },
+        "terraformAnalyzer.java.home": {
+          "type": "string",
+          "default": "",
+          "description": "Path to a Java 17+ installation. If empty, uses JAVA_HOME or PATH."
+        },
+        "terraformAnalyzer.tflintPath": {
+          "type": "string",
+          "default": "tflint",
+          "description": "Path to tflint executable"
+        },
+        "terraformAnalyzer.trivyPath": {
+          "type": "string",
+          "default": "trivy",
+          "description": "Path to Trivy executable"
+        },
+        "terraformAnalyzer.checkovPath": {
+          "type": "string",
+          "default": "checkov",
+          "description": "Path to checkov executable"
+        },
+        "terraformAnalyzer.rulesReplaceDefaults": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, only the rules listed in terraformAnalyzer.rules are shown (e.g. after Import from SonarQube). When false, listed rules are overrides and unlisted rules use default visibility."
+        },
+        "terraformAnalyzer.rules": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "blocker",
+                  "critical",
+                  "major",
+                  "minor",
+                  "info"
+                ]
+              }
+            },
+            "additionalProperties": true
+          },
+          "description": "Per-rule overrides. Omit or use {} to use the extension default. Add only the rule IDs you want to change (enabled, severity, or rule-specific properties). Unlisted rules use the built-in default unless rulesReplaceDefaults is true."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "bundle": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap --minify",
+    "vscode:prepublish": "npm run bundle",
+    "package:vsix": "node ../scripts/package-vsix.js"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.27.3",
+    "typescript": "^5.6.0"
+  }
+}
