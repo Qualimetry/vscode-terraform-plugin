@@ -1,0 +1,151 @@
+name: CI (VS Code Extension)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Java modules
+        run: mvn clean verify --batch-mode --no-transfer-progress
+
+      - name: Build VS Code client
+        working-directory: vscode-client
+        run: |
+          npm install
+          npm run compile
+
+      - name: Set extension version from POM
+        run: |
+          VERSION=$(grep -oP '(?<=<version>)[^<]+' pom.xml | head -1)
+          node -e "
+            const p = require('./vscode-client/package.json');
+            p.version = '$VERSION'.trim();
+            require('fs').writeFileSync('./vscode-client/package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+          echo "Set vscode-client version to $VERSION"
+
+      - name: Package VS Code extension
+        run: |
+          mkdir -p vscode-client/server
+          VERSION=$(grep -oP '(?<=<version>)[^<]+' pom.xml | head -1)
+          SHADED="terraform-lsp-server/target/terraform-lsp-server-${VERSION}-shaded.jar"
+          MAIN="terraform-lsp-server/target/terraform-lsp-server-${VERSION}.jar"
+          if [ -f "$SHADED" ]; then
+            cp "$SHADED" vscode-client/server/terraform-lsp-server.jar
+          elif [ -f "$MAIN" ]; then
+            cp "$MAIN" vscode-client/server/terraform-lsp-server.jar
+          else
+            echo "No LSP JAR found. Expected $SHADED or $MAIN"; ls -la terraform-lsp-server/target/ || true; exit 1
+          fi
+          cd vscode-client
+          npx vsce package --allow-missing-repository
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: vscode-client/*.vsix
+
+  release:
+    needs: build
+    if: startsWith(github.event.head_commit.message, 'release:') || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Java modules
+        run: mvn clean package --batch-mode --no-transfer-progress -DskipTests
+
+      - name: Set extension version from POM
+        run: |
+          VERSION=$(grep -oP '(?<=<version>)[^<]+' pom.xml | head -1)
+          node -e "
+            const p = require('./vscode-client/package.json');
+            p.version = '$VERSION'.trim();
+            require('fs').writeFileSync('./vscode-client/package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+          echo "Set vscode-client version to $VERSION"
+
+      - name: Build and package VS Code extension
+        run: |
+          cd vscode-client
+          npm install
+          npm run bundle
+          mkdir -p server
+          VERSION=$(grep -oP '(?<=<version>)[^<]+' ../pom.xml | head -1)
+          SHADED="../terraform-lsp-server/target/terraform-lsp-server-${VERSION}-shaded.jar"
+          MAIN="../terraform-lsp-server/target/terraform-lsp-server-${VERSION}.jar"
+          if [ -f "$SHADED" ]; then cp "$SHADED" server/terraform-lsp-server.jar; elif [ -f "$MAIN" ]; then cp "$MAIN" server/terraform-lsp-server.jar; else echo "No LSP JAR"; ls -la ../terraform-lsp-server/target/ || true; exit 1; fi
+          npx vsce package --allow-missing-repository
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./vscode-client/package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Extract release notes from CHANGELOG
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [ -f CHANGELOG.md ]; then
+            awk "/^## \[${VERSION}\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md > release-notes.md
+          fi
+          if [ ! -s release-notes.md ]; then
+            echo "Release ${{ steps.version.outputs.version }}" > release-notes.md
+            echo "" >> release-notes.md
+            echo "${{ github.event.head_commit.message }}" >> release-notes.md
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        continue-on-error: true
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          body_path: release-notes.md
+          files: vscode-client/*.vsix
+
+      - name: Publish to Visual Studio Marketplace
+        working-directory: vscode-client
+        run: npx vsce publish --packagePath "qualimetry-vscode-terraform-plugin-${{ steps.version.outputs.version }}.vsix"
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Publish to Open VSX (Cursor and other VS Code-compatible editors)
+        working-directory: vscode-client
+        run: npx ovsx publish "qualimetry-vscode-terraform-plugin-${{ steps.version.outputs.version }}.vsix"
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
